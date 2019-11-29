@@ -1,0 +1,177 @@
+#!/bin/sh
+
+#
+# POSIX-shell stack implementation
+# Copyright (C) 2019 Diego Augusto Molina
+# License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>.
+# This is free software: you are free to change and redistribute it.
+# There is NO WARRANTY, to the extent permitted by law.
+#
+# Written by Diego Augusto Molina <diegoaugustomolina@gmail.com>
+#
+# THIS IS A REMINDER OF WHY YOU SHOULD USE A REAL PROGRAMMING LANGUAGE AND NOT
+# THIS SHIT
+#
+
+    # Warning: Violent hacking ahead. Viewer discretion is advised.
+
+### EXCLUDE-START
+if [ "${0%.sh.in}" != "${0}" ]; then
+    sq="'";
+    dq='"';
+    q="${sq}${dq}${sq}${dq}${sq}";
+    s="${q}\${STACK}${q}";
+    e='[ERROR] STACK is undefined or invalid';
+    sed '
+        /^### EXCLUDE-START$/,/^### EXCLUDE-END$/d
+        s/stk_push/stack_push/g
+        s/stk_pop/stack_pop/g
+        s/stk_isempty/stack_isempty/g
+        s/stk_restore/stack_restore/g
+        s/;$/ \&\&/
+        s/: eval-start/if "\${STACK:-}"; then eval '"${q}"'/g
+        s/: eval-end/:'"${q}"'; else ! echo "'"${e}"'";fi/g
+        s/\(else\|fi\|done\)/:; \1/
+        s/STK/'"${s}"'/g
+        /^\s\s*#/d
+        /^[^#]/{
+            s/^\s*: .*$//
+        }
+        s/^\s\s*//
+        /^$/d
+    ' "${0}" | sed '
+        /^[^#]/{
+            :loop
+            $! N
+            s/\n/ /
+            t loop
+        }
+    ' |
+    sed '
+        s/ && :;\?/;/g
+        s/; :;/;/g
+        s/ ://g
+    ' > "${0%.in}";
+    echo "Compiled file: ${0%.in}" >&2;
+    exit 0;
+fi;
+### EXCLUDE-END
+
+    #
+    # Helpers for parsing in restricted fully-POSIX compliant environments. Only
+    #+ the original value of $STACK is saved. Could be extended to a push-pop
+    #+ design (most likely using eval) but there's no motivation yet.
+    #
+    # Initially inspired by:
+    #   "https://pubs.opengroup.org/onlinepubs/9699919799/utilities/sh.html" \
+    #   "#tag_20_117_16"
+    # (but things happened and this turned into a fucking monster)
+    #
+    # This is an implementation of a stack of values of the STACK variable. The
+    #+  available operations are:
+    #   * stack_push: save in the stack the current value of the STACK variable,
+    #       even remembering if it's unset.
+    #   * stack_pop
+    #   * stack_pop_once: pop safely only once in a row. Useful in loops. Each
+    #       time 'stack_push' is called the __STACK_ITER__ variable is set to
+    #       zero. When __STACK_ITER__ is zero, 'stack_pop_once' calls
+    #       'stack_pop'. Also, variable __STACK_ITER__ is always incremented by
+    #       'stack_pop_once'.
+    #   * stack_isempty
+    #   * stack_restore: restore the original value (pop to the base of the
+    #       stack).
+    #
+    # This implementation was written with the following considerations:
+    #   * Should be fully POSIX-compliant.
+    #   * Should not use anything but POSIX-shell built-ins.
+    #   * Must be fully inline-able, even comments (thanks to the ':' nop).
+    #   * Maximum code width is 80 chars.
+    #
+    # That's all. And a lot. Aliases were used because/fearing some
+    #+ implementations might not accept a function to modify the environment.
+    #
+    # Example usage:
+    #   myfile="/systemd/should/dissapear, it's obsolete and a burden";
+    #   STACK="IFS";
+    #   stack_push;
+    #   export IFS="/"; # "export" is mostly(?) unnecessary
+    #   for component in $myfile; do
+    #       stack_pop_once;
+    #       echo "File '${myfile}'s #${__IFS_ITER__} component: '${component}'";
+    #   done;
+    #
+    # Written by Diego Augusto Molina <diegoaugustomolina@gmail.com>
+    #
+
+alias stk_push=': eval-start
+        : Save current STK value;
+    __STK_SAVED_V__="${__STK_SAVED_V__:-}${STK:-}";
+        : Save current STK value length -nothing if it is unset-;
+    if [ -z "${STK:-}" ] && [ "y" = "${STK+y}" ]; then
+        __STK_SAVED_LENGTH__="${__STK_SAVED_LENGTH__:-}.";
+    else
+        __STK_SAVED_LENGTH__="${__STK_SAVED_LENGTH__:-}.${#STK}";
+    fi;
+
+    __STK_ITER__=0;
+: eval-end';
+
+alias stk_pop=': eval-start
+    if [ -n "${__STK_SAVED_LENGTH__:-}" ]; then
+            : Remove the last length from the length pseudo-array;
+        __STK_TARGET_LEN__="${__STK_SAVED_LENGTH__##*.}";
+        __STK_SAVED_LENGTH__="${__STK_SAVED_LENGTH__%.${__STK_TARGET_LEN__}}";
+
+            : Restore the last saved value of STK;
+        if [ 0 -eq "${#__STK_TARGET_LEN__}" ]; then
+                : If no length, then unset;
+            unset STK;
+
+        else
+                : If we have a length, even a zero length.;
+
+            __STK_TMP_L_MASK__="";
+            __STK_TMP_R_MASK__="";
+            __STK_TMP_ITER__=0;
+
+            while [ "${#__STK_SAVED_V__}" -gt "${__STK_TMP_ITER__}" ]; do
+                if [ "${__STK_TMP_ITER__}" -lt "${__STK_TARGET_LEN__}" ]; then
+                    __STK_TMP_R_MASK__="?${__STK_TMP_R_MASK__}";
+                else
+                    __STK_TMP_L_MASK__="?${__STK_TMP_L_MASK__}";
+                fi;
+
+                __STK_TMP_ITER__=$((1+__STK_TMP_ITER__));
+            done;
+
+            STK="${__STK_SAVED_V__#${__STK_TMP_L_MASK__}}";
+            __STK_SAVED_V__="${__STK_SAVED_V__%${__STK_TMP_R_MASK__}}";
+
+                : Cleanup the mess;
+            unset __STK_TMP_L_MASK__  __STK_TMP_R_MASK__  __STK_TMP_ITER__;
+        fi;
+
+            : More mess cleanup;
+        unset __STK_TARGET_LEN__;
+    fi;
+: eval-end';
+
+alias stk_pop_once=': eval-start
+    if [ 0 -eq "${__STK_ITER__}" ]; then
+        stk_pop;
+    fi;
+    __STK_ITER__="$(( 1 + __STK_ITER__ ))";
+: eval-end';
+
+alias stk_isempty=': eval-start
+    [ -z "${__STK_SAVED_LENGTH__}" ]
+: eval-end';
+
+alias stk_restore=': eval-start
+    while ! stk_isempty; do stk_pop; done
+: eval-end';
+
+    # Don't you dare removing the following colon
+:
+
+ #### LAST MODIFIED: 2019-11-28 21:23:42 -03 ##################################
