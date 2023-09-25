@@ -1,4 +1,4 @@
-# violent-shell
+# [codegolf] violent-shell
 Things that (most-likely) should not exist
 # Licence
 It's all GNU GPL 3+
